@@ -1,3 +1,11 @@
+<!--
+ * @Description: 
+ * @Author: yuqingli
+ * @Contact: yuqingli05@outlook.com
+ * @Date: 2023-02-19 23:05:01
+ * @LastEditTime: 2023-05-03 21:38:01
+ * @LastEditors: yuqingli
+-->
 # createRTTRomFile
 创建 rtthread rom文件系统的二进制文件。用于单独下载文件系统
 
@@ -14,8 +22,6 @@
 # 使用方式
 ~~~
 createRomFile.exe rompath target address
-或者
-createRomFile.exe rompath target address linkfile
 
 createRomFile.exe：本工程生产的可执行文件
 rompath：需要生产文件系统的文件目录
@@ -32,22 +38,27 @@ linkfile：链接文件 必须是 csv表格格式。有时候同一个文件可�
 #include <rtthread.h>
 #include <dfs_fs.h>
 #include <dfs_romfs.h>
+#include <stdint.h>
 
-static struct romfs_dirent _romfs_root[1] = {
+static const struct romfs_dirent _romfs_root[] = {
 	{ROMFS_DIRENT_DIR, "resources", NULL, 0},
+	{ROMFS_DIRENT_DIR, "dev", NULL, 0},
 };
 
 static const struct romfs_dirent _romfs = {ROMFS_DIRENT_DIR, "/", (rt_uint8_t *)_romfs_root, sizeof(_romfs_root) / sizeof(_romfs_root[0])};
 
 int rt_hw_romfs_init(void)
 {
-	static const uint32_t *p_romfs = (const uint32_t *)0x08020000;
+	const struct romfs_dirent *res_romfs = (const struct romfs_dirent *)0xC3000;
 
-	if (p_romfs[0] == (~p_romfs[1])) // 验证数据合法性
+	// 挂载根路径
+	dfs_mount(RT_NULL, "/", "rom", 0, &_romfs);
+
+	// 验证数据合法性 
+	// 挂载只读资源文件
+	if (res_romfs->type == ROMFS_DIRENT_DIR)
 	{
-		_romfs_root[0].data = (rt_uint8_t *)&p_romfs[2];
-		_romfs_root[0].size = p_romfs[0];
-		dfs_mount(RT_NULL, "/", "rom", 0, &_romfs);
+		dfs_mount(RT_NULL, "/resources/", "rom", 0, res_romfs);
 	}
 
 	return 0;
