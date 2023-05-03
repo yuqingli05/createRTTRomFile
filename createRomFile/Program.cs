@@ -330,7 +330,7 @@ namespace createRomFs
         {
             try
             {
-                using (FileStream fopen = new FileStream("C:\\Users\\yuqingli\\Documents\\rtt\\rtthread-nrf52840bsp\\doc\\resources.bin", FileMode.Create, FileAccess.Write))
+                using (FileStream fopen = new FileStream(path, FileMode.Create, FileAccess.Write))
                 {
                     fopen.Write(binary, 0, binary.Length);
                 }
@@ -382,6 +382,7 @@ namespace createRomFs
                 return -1;
             }
 
+            Console.WriteLine("生成文件成功" + OutPath);
             return 0;
         }
 
