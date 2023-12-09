@@ -1,8 +1,13 @@
-﻿using System;
+﻿using IWshRuntimeLibrary;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
+using System.Xml.Linq;
+using File = System.IO.File;
 
 namespace createRomFs
 {
@@ -12,70 +17,71 @@ namespace createRomFs
         {
             return (size + 3) / 4 * 4;
         }
-        struct RomNode
+        struct DataNode
         {
-            public uint type;
-            public ulong nameAddress; //名称地址
-            public byte[] name;       //存储名称
-            public ulong dataAddress; //数组地址
+            public byte[] md5;
+            public ulong address; //数组地址
             public byte[] data;       //存储的数据
         };
-        struct LinkMap
+        struct RomFsNode
         {
-            public string source;
-            public string link;
+            public uint type;
+            public DataNode name; //名称地址
+            public DataNode data; //存储的数据
         };
 
-        static List<LinkMap> ReadCsv(string path)
+        static List<DataNode> all_data = new List<DataNode>();
+
+        static string GetLnkSourcePath(string lnkpath)
         {
-            StreamReader sr;
-            List<LinkMap> maps = new List<LinkMap>();
-            try
+            if (System.IO.File.Exists(lnkpath))
             {
-                using (sr = new StreamReader(path, Encoding.GetEncoding("UTF-8")))
+                WshShell shell = new WshShell();
+                IWshShortcut lnk = (IWshShortcut)shell.CreateShortcut(lnkpath);
+                return lnk.TargetPath;
+            }
+            else
+            {
+                return "";
+            }
+        }
+        static byte[] GetMd5(byte[] data)
+        {
+            return MD5.Create().ComputeHash(data);
+        }
+
+        static long AddData(ulong Address, byte[] data, out DataNode node_data)
+        {
+            byte[] md5 = GetMd5(data);
+
+            foreach (DataNode i in all_data)
+            {
+                if (i.md5.SequenceEqual(md5))
                 {
-                    string str = "";
-                    while ((str = sr.ReadLine()) != null)
-                    {
-                        string[] strs = str.Split(',');
-                        if (strs.Length == 2)
-                        {
-                            LinkMap map = new LinkMap();
-                            map.source = strs[0];
-                            map.link = strs[1];
-                            maps.Add(map);
-                        }
-                    }
+                    node_data = i;
+                    return 0;
                 }
             }
-            catch (Exception ex)
-            {
 
-            }
-            return maps;
+            Debug.WriteLine("创建一个内存区域 address=" + Address.ToString("x"));
+
+            node_data = new DataNode();
+            node_data.address = Address;
+            node_data.data = data;
+            node_data.md5 = md5;
+            all_data.Add(node_data);
+            return data.Length;
         }
-        static long mkLink(ulong Address, string name, RomNode sourceNode, out RomNode node)
+        static long mkFile(ulong Address, string path, out RomFsNode node)
         {
             ulong startAddress = Address;
-
-            node = new RomNode();
-            node.dataAddress = sourceNode.dataAddress;
-            node.data = sourceNode.data;
-            node.type = sourceNode.type;
-
-            node.name = Encoding.UTF8.GetBytes(name + "\0");
-            node.nameAddress = Address;
-            Address += Alignment((ulong)node.name.Length);
-
-            return (long)(Address - startAddress);
-        }
-        static long mkFile(ulong Address, string path, out RomNode node)
-        {
-            ulong startAddress = Address;
-            node = new RomNode();
-            node.nameAddress = 0;
-            node.dataAddress = 0;
+            long len;
+            node = new RomFsNode();
             node.type = 0;
+            node.name.address = 0;
+            node.name.data = new byte[0];
+            node.data.address = 0;
+            node.data.data = new byte[0];
 
             if (!File.Exists(path))
             {
@@ -99,22 +105,33 @@ namespace createRomFs
                 return -1;
             }
 
-            node.type = 0;
-            node.name = Encoding.UTF8.GetBytes(Path.GetFileName(path) + "\0");
-            node.nameAddress = Address;
-            Address += Alignment((ulong)node.name.Length);
-            node.data = data;
-            node.dataAddress = Address;
-            Address += Alignment((ulong)node.data.Length);
+            Debug.WriteLine(path);
+
+            len = AddData(Address, Encoding.UTF8.GetBytes(Path.GetFileName(path) + "\0"), out node.name);
+            Address += Alignment((ulong)len);
+
+            len = AddData(Address, data, out node.data);
+            Address += Alignment((ulong)len);
 
             return (long)(Address - startAddress);
         }
-        static long mkDir(ulong Address, string path, out List<RomNode> nodes)
+        static long mkDir(ulong Address, string path, out RomFsNode node)
         {
             ulong startAddress = Address;
-            nodes = new List<RomNode>();
+            long len;
 
-            List<LinkMap> maps = ReadCsv(Path.Combine(path, "__link.csv"));
+            node = new RomFsNode();
+            node.type = 1;
+            node.name.address = 0;
+            node.name.data = new byte[0];
+            node.data.address = 0;
+            node.data.data = new byte[0];
+
+            if (!Directory.Exists(path))
+            {
+                return -1;
+            }
+
             DirectoryInfo dir = new DirectoryInfo(path);
             FileInfo[] fils_infos = dir.GetFiles();
             DirectoryInfo[] dir_infos = dir.GetDirectories();
@@ -124,90 +141,28 @@ namespace createRomFs
             // 变量文件
             foreach (FileInfo f in fils_infos)
             {
-                if (f.Name == "__link.csv")
-                    continue; //跳过链接文件
+                bool islnk = f.Extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase);
 
-                RomNode node_temp;
-                long len = mkFile(Address, f.FullName, out node_temp);
-                if (len > 0)
+                if (islnk)
                 {
-                    Address += (ulong)len;
-                    nodes.Add(node_temp);
-
-                    //添加到目录数组
-                    head.Add((byte)node_temp.type);
-                    head.Add((byte)(node_temp.type >> 8));
-                    head.Add((byte)(node_temp.type >> 16));
-                    head.Add((byte)(node_temp.type >> 24));
-
-                    head.Add((byte)node_temp.nameAddress);
-                    head.Add((byte)(node_temp.nameAddress >> 8));
-                    head.Add((byte)(node_temp.nameAddress >> 16));
-                    head.Add((byte)(node_temp.nameAddress >> 24));
-
-                    head.Add((byte)node_temp.dataAddress);
-                    head.Add((byte)(node_temp.dataAddress >> 8));
-                    head.Add((byte)(node_temp.dataAddress >> 16));
-                    head.Add((byte)(node_temp.dataAddress >> 24));
-
-                    uint datalen = (uint)(node_temp.data.Length);
-                    head.Add((byte)datalen);
-                    head.Add((byte)(datalen >> 8));
-                    head.Add((byte)(datalen >> 16));
-                    head.Add((byte)(datalen >> 24));
-                }
-            }
-
-            // 遍历目录
-            foreach (DirectoryInfo d in dir_infos)
-            {
-                List<RomNode> nodes_temp;
-                long len = mkDir(Address, d.FullName, out nodes_temp);
-                if (len > 0)
-                {
-                    Address += (ulong)len;
-                    nodes.AddRange(nodes_temp);
-
-                    RomNode node_temp = nodes_temp.Last();
-
-                    //添加到目录数组
-                    head.Add((byte)node_temp.type);
-                    head.Add((byte)(node_temp.type >> 8));
-                    head.Add((byte)(node_temp.type >> 16));
-                    head.Add((byte)(node_temp.type >> 24));
-
-                    head.Add((byte)node_temp.nameAddress);
-                    head.Add((byte)(node_temp.nameAddress >> 8));
-                    head.Add((byte)(node_temp.nameAddress >> 16));
-                    head.Add((byte)(node_temp.nameAddress >> 24));
-
-                    head.Add((byte)node_temp.dataAddress);
-                    head.Add((byte)(node_temp.dataAddress >> 8));
-                    head.Add((byte)(node_temp.dataAddress >> 16));
-                    head.Add((byte)(node_temp.dataAddress >> 24));
-
-                    uint datalen = (uint)(node_temp.data.Length / 16);
-                    head.Add((byte)datalen);
-                    head.Add((byte)(datalen >> 8));
-                    head.Add((byte)(datalen >> 16));
-                    head.Add((byte)(datalen >> 24));
-                }
-            }
-
-            // 遍历映射
-            foreach (LinkMap map in maps)
-            {
-                byte[] name = Encoding.UTF8.GetBytes(map.source + "\0");
-                foreach (RomNode node in nodes)
-                {
-                    if (Enumerable.SequenceEqual(node.name, name))
+                    //快捷方式
+                    // 去掉后缀之后 不存在同名文件或者路径
+                    string str_temp = Path.Combine(f.DirectoryName, Path.GetFileNameWithoutExtension(f.FullName));
+                    if (!File.Exists(str_temp) && !Directory.Exists(str_temp))
                     {
-                        RomNode node_temp;
-                        long len = mkLink(Address, map.link, node, out node_temp);
-                        if (len > 0)
+                        string filePath = GetLnkSourcePath(f.FullName);
+                        RomFsNode node_temp = new RomFsNode();
+                        if (File.Exists(filePath))
+                            len = mkFile(Address, filePath, out node_temp);
+                        else if (Directory.Exists(filePath))
+                            len = mkDir(Address, filePath, out node_temp);
+                        else
+                            len = -1;
+
+
+                        if (len >= 0)
                         {
                             Address += (ulong)len;
-                            nodes.Add(node_temp);
 
                             //添加到目录数组
                             head.Add((byte)node_temp.type);
@@ -215,113 +170,153 @@ namespace createRomFs
                             head.Add((byte)(node_temp.type >> 16));
                             head.Add((byte)(node_temp.type >> 24));
 
-                            head.Add((byte)node_temp.nameAddress);
-                            head.Add((byte)(node_temp.nameAddress >> 8));
-                            head.Add((byte)(node_temp.nameAddress >> 16));
-                            head.Add((byte)(node_temp.nameAddress >> 24));
+                            // 连接文件要重新添加 名称
+                            Debug.WriteLine(f.FullName);
+                            DataNode data_name;
+                            len = AddData(Address, Encoding.UTF8.GetBytes(Path.GetFileNameWithoutExtension(f.FullName) + "\0"), out data_name); //去掉后缀
+                            Address += Alignment((ulong)len);
+                            head.Add((byte)data_name.address);
+                            head.Add((byte)(data_name.address >> 8));
+                            head.Add((byte)(data_name.address >> 16));
+                            head.Add((byte)(data_name.address >> 24));
 
-                            head.Add((byte)node_temp.dataAddress);
-                            head.Add((byte)(node_temp.dataAddress >> 8));
-                            head.Add((byte)(node_temp.dataAddress >> 16));
-                            head.Add((byte)(node_temp.dataAddress >> 24));
+                            head.Add((byte)node_temp.data.address);
+                            head.Add((byte)(node_temp.data.address >> 8));
+                            head.Add((byte)(node_temp.data.address >> 16));
+                            head.Add((byte)(node_temp.data.address >> 24));
 
                             uint datalen;
-                            if (node_temp.type == 0)
-                                datalen = (uint)(node_temp.data.Length);
+                            if (node_temp.type == 1)
+                                datalen = (uint)(node_temp.data.data.Length / 16);
                             else
-                                datalen = (uint)(node_temp.data.Length / 16);
-
+                                datalen = (uint)(node_temp.data.data.Length);
                             head.Add((byte)datalen);
                             head.Add((byte)(datalen >> 8));
                             head.Add((byte)(datalen >> 16));
                             head.Add((byte)(datalen >> 24));
                         }
-                        break;
                     }
                 }
+                else
+                {
+                    RomFsNode node_temp;
+                    len = mkFile(Address, f.FullName, out node_temp);
+                    if (len >= 0)
+                    {
+                        Address += (ulong)len;
 
+                        //添加到目录数组
+                        head.Add((byte)node_temp.type);
+                        head.Add((byte)(node_temp.type >> 8));
+                        head.Add((byte)(node_temp.type >> 16));
+                        head.Add((byte)(node_temp.type >> 24));
+
+                        head.Add((byte)node_temp.name.address);
+                        head.Add((byte)(node_temp.name.address >> 8));
+                        head.Add((byte)(node_temp.name.address >> 16));
+                        head.Add((byte)(node_temp.name.address >> 24));
+
+                        head.Add((byte)node_temp.data.address);
+                        head.Add((byte)(node_temp.data.address >> 8));
+                        head.Add((byte)(node_temp.data.address >> 16));
+                        head.Add((byte)(node_temp.data.address >> 24));
+
+                        uint datalen = (uint)(node_temp.data.data.Length);
+                        head.Add((byte)datalen);
+                        head.Add((byte)(datalen >> 8));
+                        head.Add((byte)(datalen >> 16));
+                        head.Add((byte)(datalen >> 24));
+                    }
+                }
             }
 
-            // 添加当前目录列表
+            // 遍历目录
+            foreach (DirectoryInfo d in dir_infos)
             {
-                // 添加一个目录 node
-                RomNode node = new RomNode();
-                node.type = 0x01;
-                node.name = Encoding.UTF8.GetBytes(dir.Name + "\0");
-                node.nameAddress = Address;
-                Address += Alignment((ulong)node.name.Length);
-                node.data = head.ToArray();
-                node.dataAddress = Address;
-                Address += Alignment((ulong)node.data.Length);
-                nodes.Add(node);
+                RomFsNode node_temp;
+                len = mkDir(Address, d.FullName, out node_temp);
+                if (len >= 0)
+                {
+                    Address += (ulong)len;
+
+                    //添加到目录数组
+                    head.Add((byte)node_temp.type);
+                    head.Add((byte)(node_temp.type >> 8));
+                    head.Add((byte)(node_temp.type >> 16));
+                    head.Add((byte)(node_temp.type >> 24));
+
+                    head.Add((byte)node_temp.name.address);
+                    head.Add((byte)(node_temp.name.address >> 8));
+                    head.Add((byte)(node_temp.name.address >> 16));
+                    head.Add((byte)(node_temp.name.address >> 24));
+
+                    head.Add((byte)node_temp.data.address);
+                    head.Add((byte)(node_temp.data.address >> 8));
+                    head.Add((byte)(node_temp.data.address >> 16));
+                    head.Add((byte)(node_temp.data.address >> 24));
+
+                    uint datalen = (uint)(node_temp.data.data.Length / 16);
+                    head.Add((byte)datalen);
+                    head.Add((byte)(datalen >> 8));
+                    head.Add((byte)(datalen >> 16));
+                    head.Add((byte)(datalen >> 24));
+                }
             }
+
+            Debug.WriteLine(path);
+            // 添加当前目录列表
+            len = AddData(Address, Encoding.UTF8.GetBytes(Path.GetFileName(path) + "\0"), out node.name);
+            Address += Alignment((ulong)len);
+
+            len = AddData(Address, head.ToArray(), out node.data);
+            Address += Alignment((ulong)len);
 
             return (long)(Address - startAddress);
         }
-        static long mkRomFs(ulong Address, string path, out List<RomNode> nodes)
+        static long mkRomFs(ulong Address, string path)
         {
-            long len = mkDir(Address + 16, path, out nodes);
+            RomFsNode node_temp;
+            DataNode data;
+            long len = mkDir(Address + 16, Path.GetFullPath(path), out node_temp);
+
+            Debug.WriteLine("创建根目录");
 
             // 添加根路径
-            {
-                RomNode node_temp = nodes.Last();
-                List<byte> head = new List<byte>();
-                head.Add((byte)node_temp.type);
-                head.Add((byte)(node_temp.type >> 8));
-                head.Add((byte)(node_temp.type >> 16));
-                head.Add((byte)(node_temp.type >> 24));
+            List<byte> head = new List<byte>();
+            head.Add((byte)node_temp.type);
+            head.Add((byte)(node_temp.type >> 8));
+            head.Add((byte)(node_temp.type >> 16));
+            head.Add((byte)(node_temp.type >> 24));
 
-                head.Add((byte)node_temp.nameAddress);
-                head.Add((byte)(node_temp.nameAddress >> 8));
-                head.Add((byte)(node_temp.nameAddress >> 16));
-                head.Add((byte)(node_temp.nameAddress >> 24));
+            head.Add((byte)node_temp.name.address);
+            head.Add((byte)(node_temp.name.address >> 8));
+            head.Add((byte)(node_temp.name.address >> 16));
+            head.Add((byte)(node_temp.name.address >> 24));
 
-                head.Add((byte)node_temp.dataAddress);
-                head.Add((byte)(node_temp.dataAddress >> 8));
-                head.Add((byte)(node_temp.dataAddress >> 16));
-                head.Add((byte)(node_temp.dataAddress >> 24));
+            head.Add((byte)node_temp.data.address);
+            head.Add((byte)(node_temp.data.address >> 8));
+            head.Add((byte)(node_temp.data.address >> 16));
+            head.Add((byte)(node_temp.data.address >> 24));
 
-                uint datalen = (uint)(node_temp.data.Length / 16);
-                head.Add((byte)datalen);
-                head.Add((byte)(datalen >> 8));
-                head.Add((byte)(datalen >> 16));
-                head.Add((byte)(datalen >> 24));
+            uint datalen = (uint)(node_temp.data.data.Length / 16);
+            head.Add((byte)datalen);
+            head.Add((byte)(datalen >> 8));
+            head.Add((byte)(datalen >> 16));
+            head.Add((byte)(datalen >> 24));
 
+            len += AddData(Address, head.ToArray(), out data);
 
-
-                // 添加根路径
-                RomNode node = new RomNode();
-                node.type = 0x01;
-                node.name = new byte[0]; //根路径是没有名称的 因为不需要上级
-                node.nameAddress = 0;
-                node.data = head.ToArray();
-                node.dataAddress = Address;
-                nodes.Add(node);
-            }
-
-            return len + 16;
+            return len;
         }
-        static byte[] mkRomFsBinary(ulong Address, long len, List<RomNode> nodes)
+        static byte[] mkRomFsBinary(ulong Address, long len)
         {
             byte[] binary = new byte[len];
             for (int i = 0; i < binary.Length; i++)
                 binary[i] = 0xFF;
 
-            foreach (RomNode node_temp in nodes)
+            foreach (DataNode i in all_data)
             {
-                int startIndex;
-                // 拷贝名称
-                if (node_temp.nameAddress != 0 && node_temp.name != null && node_temp.name.Length > 0)
-                {
-                    startIndex = (int)(node_temp.nameAddress - Address);
-                    Array.Copy(node_temp.name, 0, binary, startIndex, node_temp.name.Length);
-                }
-                // 拷贝数据
-                if (node_temp.dataAddress != 0 && node_temp.data != null && node_temp.data.Length > 0)
-                {
-                    startIndex = (int)(node_temp.dataAddress - Address);
-                    Array.Copy(node_temp.data, 0, binary, startIndex, node_temp.data.Length);
-                }
+                Array.Copy(i.data, 0, binary, (int)(i.address - Address), i.data.Length);
             }
 
             return binary;
@@ -350,10 +345,10 @@ namespace createRomFs
                 return -1;
             }
 
-            string Path = args[0];
-            if (!Directory.Exists(Path))
+            string path = args[0];
+            if (!Directory.Exists(path))
             {
-                Console.WriteLine("路径[" + Path + "]不存在");
+                Console.WriteLine("路径[" + path + "]不存在");
                 return -1;
             }
 
@@ -372,9 +367,9 @@ namespace createRomFs
                 return -1;
             }
 
-            List<RomNode> nodes;
-            long len = mkRomFs(Address, Path, out nodes);
-            byte[] binary = mkRomFsBinary(Address, len, nodes);
+            long len = mkRomFs(Address, path);
+            byte[] binary = mkRomFsBinary(Address, len);
+            Debug.WriteLine("文件系统大小 " + len.ToString());
 
             if (!SaveBinary(OutPath, binary))
             {
@@ -391,4 +386,4 @@ namespace createRomFs
 
 
 
-        
+
