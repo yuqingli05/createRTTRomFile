@@ -115,7 +115,7 @@ namespace createRomFs
 
             return (long)(Address - startAddress);
         }
-        static long mkDir(ulong Address, string path, out RomFsNode node)
+        static long mkDir(ulong Address, string path, out RomFsNode node, int depth)
         {
             ulong startAddress = Address;
             long len;
@@ -127,7 +127,7 @@ namespace createRomFs
             node.data.address = 0;
             node.data.data = new byte[0];
 
-            if (!Directory.Exists(path))
+            if (!Directory.Exists(path) || depth > 16)
             {
                 return -1;
             }
@@ -155,7 +155,7 @@ namespace createRomFs
                         if (File.Exists(filePath))
                             len = mkFile(Address, filePath, out node_temp);
                         else if (Directory.Exists(filePath))
-                            len = mkDir(Address, filePath, out node_temp);
+                            len = mkDir(Address, filePath, out node_temp, depth + 1);
                         else
                             len = -1;
 
@@ -234,7 +234,7 @@ namespace createRomFs
             foreach (DirectoryInfo d in dir_infos)
             {
                 RomFsNode node_temp;
-                len = mkDir(Address, d.FullName, out node_temp);
+                len = mkDir(Address, d.FullName, out node_temp, depth + 1);
                 if (len >= 0)
                 {
                     Address += (ulong)len;
@@ -277,7 +277,7 @@ namespace createRomFs
         {
             RomFsNode node_temp;
             DataNode data;
-            long len = mkDir(Address + 16, Path.GetFullPath(path), out node_temp);
+            long len = mkDir(Address + 16, Path.GetFullPath(path), out node_temp, 0);
 
             Debug.WriteLine("创建根目录");
 
