@@ -422,7 +422,6 @@ namespace createRomFs
             {
                 Array.Copy(i.data, 0, binary, (int)(i.address - Address), i.data.Length);
             }
-
             return binary;
         }
         static bool SaveBinary(string path, byte[] binary)
@@ -467,7 +466,7 @@ namespace createRomFs
             OutPath = args[1];
             try
             {
-                if (args[2].Substring(0, 2) == "0X" || args[2].Substring(0, 2) == "0x")
+                if (args[2].Length >= 2 && (args[2].Substring(0, 2) == "0X" || args[2].Substring(0, 2) == "0x"))
                     BinAddress = ulong.Parse(args[2].Substring(2, args[2].Length - 2), System.Globalization.NumberStyles.HexNumber);
                 else
                     BinAddress = ulong.Parse(args[2]);
@@ -482,7 +481,7 @@ namespace createRomFs
             {
                 try
                 {
-                    if (args[3].Substring(0, 2) == "0X" || args[3].Substring(0, 2) == "0x")
+                    if (args[3].Length >= 2 && (args[3].Substring(0, 2) == "0X" || args[3].Substring(0, 2) == "0x"))
                         BinLen = ulong.Parse(args[3].Substring(2, args[3].Length - 2), System.Globalization.NumberStyles.HexNumber);
                     else
                         BinLen = ulong.Parse(args[3]);
@@ -498,7 +497,7 @@ namespace createRomFs
             {
                 try
                 {
-                    if (args[4].Substring(0, 2) == "0X" || args[4].Substring(0, 2) == "0x")
+                    if (args[4].Length >= 2 && (args[4].Substring(0, 2) == "0X" || args[4].Substring(0, 2) == "0x"))
                         EntryAddress = ulong.Parse(args[4].Substring(2, args[4].Length - 2), System.Globalization.NumberStyles.HexNumber);
                     else
                         EntryAddress = ulong.Parse(args[4]);
@@ -522,14 +521,21 @@ namespace createRomFs
 
 
             ulong len = mkRomFs(BinAddress, BinLen, InPath, EntryAddress);
-            byte[] binary = mkRomFsBinary(BinAddress, len);
-            Debug.WriteLine("文件系统大小 " + len.ToString());
-            if (binary.Length > 0 && !SaveBinary(OutPath, binary))
+            if(len > 0)
             {
-                Console.WriteLine("保存文件失败,可能是权限不够");
-                return -1;
+                byte[] binary = mkRomFsBinary(BinAddress, len);
+                Debug.WriteLine("文件系统大小 " + len.ToString());
+                if (binary.Length > 0 && !SaveBinary(OutPath, binary))
+                {
+                    Console.WriteLine("保存文件失败,可能是权限不够");
+                    return -1;
+                }
+                Console.WriteLine("生成文件成功" + OutPath);
             }
-            Console.WriteLine("生成文件成功" + OutPath);
+            else
+            {
+                Console.WriteLine("超出大小限制");
+            }
             return 0;
         }
 
