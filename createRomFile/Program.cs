@@ -452,7 +452,8 @@ namespace createRomFs
 
             if (args.Length < 3 || args.Length > 5)
             {
-                Console.WriteLine("eg: createRomFs.exe c://path c://romfs.bin 0x00");
+                Console.WriteLine("eg: createRomFs.exe c://path c://romfs.bin BinAddress");
+                Console.WriteLine("eg: createRomFs.exe c://path c://romfs.bin BinAddress BinLen EntryAddress");
                 return -1;
             }
 
@@ -481,14 +482,14 @@ namespace createRomFs
             {
                 try
                 {
-                    if (args[2].Substring(0, 2) == "0X" || args[2].Substring(0, 2) == "0x")
-                        BinLen = ulong.Parse(args[3].Substring(2, args[2].Length - 2), System.Globalization.NumberStyles.HexNumber);
+                    if (args[3].Substring(0, 2) == "0X" || args[3].Substring(0, 2) == "0x")
+                        BinLen = ulong.Parse(args[3].Substring(2, args[3].Length - 2), System.Globalization.NumberStyles.HexNumber);
                     else
                         BinLen = ulong.Parse(args[3]);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("长度参数错误 " + args[2]);
+                    Console.WriteLine("长度参数错误 " + args[3]);
                     return -1;
                 }
             }
@@ -497,14 +498,14 @@ namespace createRomFs
             {
                 try
                 {
-                    if (args[2].Substring(0, 2) == "0X" || args[2].Substring(0, 2) == "0x")
-                        EntryAddress = ulong.Parse(args[4].Substring(2, args[2].Length - 2), System.Globalization.NumberStyles.HexNumber);
+                    if (args[4].Substring(0, 2) == "0X" || args[4].Substring(0, 2) == "0x")
+                        EntryAddress = ulong.Parse(args[4].Substring(2, args[4].Length - 2), System.Globalization.NumberStyles.HexNumber);
                     else
                         EntryAddress = ulong.Parse(args[4]);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("入口地址错误 " + args[2]);
+                    Console.WriteLine("入口地址错误 " + args[4]);
                     return -1;
                 }
             }
